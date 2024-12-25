@@ -14,7 +14,7 @@
     <!-- Group nodes under a custom namespace -->
     <group>
         <push-ros-namespace namespace="$(var custom_namespace)" />
-        <node pkg="attach_shelf" exec="pre_approach_main" name="pre_approach_node" output="screen">
+        <node pkg="attach_shelf" exec="pre_approach_node" name="pre_approach_node" output="screen">
             <param name="obstacle" value="$(var obstacle)" />
             <param name="degrees" value="$(var degrees)" />
         </node>

@@ -31,9 +31,6 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-# to use custom service messages. 
-rosidl_generate_interfaces(${PROJECT_NAME} "srv/GoToLoading.srv" )
-
 # Libraries
 add_library(pre_approach src/pre_approach.cpp)
 add_library(pre_approach_v2 src/pre_approach_v2.cpp)
@@ -50,22 +47,24 @@ ament_target_dependencies(pre_approach rclcpp geometry_msgs sensor_msgs nav_msgs
 ament_target_dependencies(pre_approach_v2 rclcpp sensor_msgs geometry_msgs std_msgs nav_msgs tf2 tf2_ros)
 ament_target_dependencies(approach_service_server rclcpp sensor_msgs geometry_msgs std_msgs nav_msgs tf2 tf2_ros)
 
-# Link srv to libraries
-rosidl_target_interfaces(pre_approach_v2 ${PROJECT_NAME} "rosidl_typesupport_cpp")
-rosidl_target_interfaces(approach_service_server ${PROJECT_NAME} "rosidl_typesupport_cpp")
+# Generate interfaces for the .srv file
+rosidl_generate_interfaces(${PROJECT_NAME} "srv/GoToLoading.srv" DEPENDENCIES std_msgs sensor_msgs geometry_msgs)
+rosidl_get_typesupport_target(typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(pre_approach_v2 ${typesupport_target})
+target_link_libraries(approach_service_server ${typesupport_target})
 
 # Executables
-add_executable(pre_approach_main src/pre_approach_main.cpp)
-add_executable(pre_approach_v2_main src/pre_approach_v2_main.cpp)
-add_executable(approach_service_server_main src/approach_service_server_main.cpp)
+add_executable(pre_approach_node src/pre_approach_main.cpp)
+add_executable(pre_approach_v2_node src/pre_approach_v2_main.cpp)
+add_executable(approach_service_server_node src/approach_service_server_main.cpp)
 
 # Link libraries to executables
-target_link_libraries(pre_approach_main pre_approach)
-target_link_libraries(pre_approach_v2_main pre_approach_v2)
-target_link_libraries(approach_service_server_main approach_service_server)
+target_link_libraries(pre_approach_node pre_approach)
+target_link_libraries(pre_approach_v2_node pre_approach_v2)
+target_link_libraries(approach_service_server_node approach_service_server)
 
 # Install additional files
-install(TARGETS pre_approach_main pre_approach_v2_main approach_service_server_main
+install(TARGETS pre_approach_node pre_approach_v2_node approach_service_server_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
