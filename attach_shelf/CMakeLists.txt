@@ -31,8 +31,10 @@ endif()
 
 # Libraries
 add_library(pre_approach src/pre_approach.cpp)
+add_library(pre_approach_v2 src/pre_approach_v2.cpp)
+add_library(approach_service_server src/approach_service_server.cpp)
 
-install(TARGETS pre_approach
+install(TARGETS pre_approach pre_approach_v2 approach_service_server
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -40,15 +42,21 @@ install(TARGETS pre_approach
 
 # Link dependencies to libraries
 ament_target_dependencies(pre_approach rclcpp geometry_msgs sensor_msgs nav_msgs)
+ament_target_dependencies(pre_approach_v2 rclcpp geometry_msgs sensor_msgs nav_msgs)
+ament_target_dependencies(approach_service_server rclcpp geometry_msgs sensor_msgs nav_msgs)
 
 # Executables
 add_executable(pre_approach_main src/pre_approach_main.cpp)
+add_executable(pre_approach_v2_main src/pre_approach_v2_main.cpp)
+add_executable(approach_service_server_main src/approach_service_server_main.cpp)
 
 # Link libraries to executables
 target_link_libraries(pre_approach_main pre_approach)
+target_link_libraries(pre_approach_v2_main pre_approach_v2)
+target_link_libraries(approach_service_server_main approach_service_server)
 
 # Install additional files
-install(TARGETS pre_approach_main
+install(TARGETS pre_approach_main pre_approach_v2_main approach_service_server_main
   DESTINATION lib/${PROJECT_NAME}
 )
 
