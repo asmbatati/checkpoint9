@@ -2,6 +2,7 @@
 #define APPROACH_SERVICE_SERVER_HPP
 
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <geometry_msgs/msg/twist.hpp>
 #include <memory>
