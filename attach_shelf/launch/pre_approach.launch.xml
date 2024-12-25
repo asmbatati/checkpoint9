@@ -3,13 +3,13 @@
     <!-- Define launch arguments -->
     <arg name="obstacle" default="0.3" />
     <arg name="degrees" default="-90" />
-    <arg name="rviz_config_file_name" default="pre_approach_config.rviz" />
+    <arg name="rviz_config_file_name" default="attach_shelf.rviz" />
     <arg name="custom_namespace" default="attach_shelf_ns" />
 
-    <!-- Launch RViz with the specified configuration
-    <include file="$(find-pkg-share rviz2)/launch/rviz2.launch.py">
+    <!-- Launch RViz with the specified configuration -->
+    <include file="$(find-pkg-share attach_shelf)/launch/rviz2.launch.py">
         <arg name="rviz_config" value="$(find-pkg-share attach_shelf)/rviz/$(var rviz_config_file_name)" />
-    </include> -->
+    </include>
 
     <!-- Group nodes under a custom namespace -->
     <group>
