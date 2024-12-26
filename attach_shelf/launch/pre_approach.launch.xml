@@ -3,7 +3,7 @@
     <!-- Define launch arguments -->
     <arg name="obstacle" default="0.3" />
     <arg name="degrees" default="-90" />
-    <arg name="rviz_config_file_name" default="attach_shelf.rviz" />
+    <arg name="rviz_config_file_name" default="config_sim.rviz" />
     <arg name="custom_namespace" default="attach_shelf_ns" />
 
     <!-- Launch RViz with the specified configuration -->
