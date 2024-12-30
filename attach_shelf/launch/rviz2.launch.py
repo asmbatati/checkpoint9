@@ -8,22 +8,35 @@ def generate_launch_description():
     description_package_name = "attach_shelf"
     rviz_file = 'attach_shelf.rviz'
 
+    # Static transforms for missing frames
     static_transform_elevator = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=['0', '0', '0.5', '0', '0', '0', 'robot_base_footprint', 'robot_evelator_platform_link']
-    )
-
-    static_transform_right_wheel = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=['0.3', '0.2', '0', '0', '0', '0', 'robot_base_footprint', 'robot_right_wheel_link']
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=[
+            "0", "0", "0", "0", "0", "0", "1",  # Transform from parent to child
+            "robot_evelator_base_link", "robot_evelator_platform_link"
+        ],
+        name="static_transform_elevator"
     )
 
     static_transform_left_wheel = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=['0.3', '0.2', '0', '0', '0', '0', 'robot_base_footprint', 'robot_left_wheel_link']
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=[
+            "0", "0", "0", "0", "0", "0", "1",  # Transform from parent to child
+            "robot_base_link", "robot_left_wheel_link"
+        ],
+        name="static_transform_left_wheel"
+    )
+
+    static_transform_right_wheel = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=[
+            "0", "0", "0", "0", "0", "0", "1",  # Transform from parent to child
+            "robot_base_link", "robot_right_wheel_link"
+        ],
+        name="static_transform_right_wheel"
     )
 
     # RVIZ Configuration
@@ -38,8 +51,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # static_transform_elevator,
-        # static_transform_right_wheel,
-        # static_transform_left_wheel,
+        static_transform_elevator,
+        static_transform_left_wheel,
+        static_transform_right_wheel,
         rviz_node,
     ])
