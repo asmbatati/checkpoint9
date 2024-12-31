@@ -37,15 +37,13 @@ PreApproachNode::PreApproachNode() : Node("pre_approach_node") {
       std::chrono::milliseconds(100),
       std::bind(&PreApproachNode::timer_callback, this), timer_cb_group_);
 
-  RCLCPP_INFO(this->get_logger(), "End of Constructor");
+  RCLCPP_INFO(this->get_logger(), "Node initialized and ready.");
 }
 
 double PreApproachNode::get_yaw_from_quaternion(double x, double y, double z, double w) {
-  double yaw;
   double siny_cosp = 2 * (w * z + x * y);
   double cosy_cosp = 1 - 2 * (y * y + z * z);
-  yaw = std::atan2(siny_cosp, cosy_cosp);
-  return yaw;
+  return std::atan2(siny_cosp, cosy_cosp);
 }
 
 void PreApproachNode::odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
@@ -73,24 +71,27 @@ void PreApproachNode::timer_callback() {
   this->get_parameter("degrees", rotation_degrees_);
 
   switch (state_) {
-  case State::MOVING_FORWARD:
-    cmd_vel_msg.linear.x = 0.5; // Move forward
-    break;
+    case State::MOVING_FORWARD:
+      cmd_vel_msg.linear.x = 0.5; // Move forward
+      break;
 
-  case State::ROTATING:
-    RCLCPP_INFO(this->get_logger(),
-                "rotation_degree : %d, rotation_radian : %f, yaw:%f",
-                rotation_degrees_, rotation_radian, yaw_);
-    cmd_vel_msg.angular.z = rotation_radian * 0.2; // Rotate
-    if (std::fabs(rotation_radian - yaw_) <= 0.03)
-      state_ = State::STOPPED;
-    break;
+    case State::ROTATING:
+      RCLCPP_INFO(this->get_logger(),
+                  "rotation_degree : %d, rotation_radian : %f, yaw:%f",
+                  rotation_degrees_, rotation_radian, yaw_);
+      cmd_vel_msg.angular.z = rotation_radian * 0.2; // Rotate
+      if (std::fabs(rotation_radian - yaw_) <= 0.03)
+        state_ = State::STOPPED;
+      break;
 
-  case State::STOPPED:
-    RCLCPP_INFO(this->get_logger(), "Stopped");
-    cmd_vel_msg.angular.z = 0.0;
-    cmd_vel_msg.linear.x = 0.0;
-    break;
+    case State::STOPPED:
+      RCLCPP_INFO(this->get_logger(), "Stopped");
+      cmd_vel_msg.angular.z = 0.0;
+      cmd_vel_msg.linear.x = 0.0;
+
+      // Graceful shutdown
+      rclcpp::shutdown();
+      return;
   }
 
   cmd_vel_pub_->publish(cmd_vel_msg);
