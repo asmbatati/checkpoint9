@@ -242,6 +242,14 @@ void ApproachServiceServer::moving_under_cart() {
 void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
     last_scan_ = msg;
 
+    finding_shelf_legs();
+    adding_fixed_cartframe();
+    
+    if (!start_service_) {
+        RCLCPP_DEBUG(this->get_logger(), "No active service request. Skipping movement logic.");
+        return;
+    }
+
     // Log first few ranges and intensities for debugging
     for (size_t i = 0; i < std::min<size_t>(last_scan_->ranges.size(), 10); ++i) {
         RCLCPP_INFO(this->get_logger(), "Range[%zu]: %f Intensity: %f",
@@ -250,7 +258,6 @@ void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::Sha
 
     // Check if we can find shelf legs
     if (finding_shelf_legs()) {
-        adding_fixed_cartframe();
         if (!found_center_position_) {
             finding_center_position();
         }
@@ -266,7 +273,6 @@ void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::Sha
     }
 }
 
-
 void ApproachServiceServer::service_callback(
     const std::shared_ptr<attach_shelf::srv::GoToLoading::Request> request,
     const std::shared_ptr<attach_shelf::srv::GoToLoading::Response> response) {
@@ -276,6 +282,7 @@ void ApproachServiceServer::service_callback(
 
     if (request->attach_to_shelf) {
         if (find_two_legs_) {
+            start_service_ = true;
             response->complete = true;
             RCLCPP_INFO(this->get_logger(), "[SERVICE] Operation successful. Shelf legs detected.");
         } else {
@@ -283,6 +290,7 @@ void ApproachServiceServer::service_callback(
             RCLCPP_WARN(this->get_logger(), "[SERVICE] Operation failed. Unable to detect shelf legs.");
         }
     } else {
+        start_service_ = false;
         response->complete = false;
         RCLCPP_ERROR(this->get_logger(), "[SERVICE] Invalid request: attach_to_shelf=false.");
     }
