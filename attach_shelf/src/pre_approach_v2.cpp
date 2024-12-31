@@ -45,6 +45,16 @@ PreApproachNode::PreApproachNode() : Node("pre_approach_v2_node") {
 
     srv_client_ = this->create_client<attach_shelf::srv::GoToLoading>("approach_shelf");
 
+    // Wait for the service to become available
+    while (!srv_client_->wait_for_service(std::chrono::seconds(1))) {
+        if (!rclcpp::ok()) {
+            RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the service. Exiting.");
+            return;  // Return instead of `return 0` since this is not `main`
+        }
+        RCLCPP_WARN(this->get_logger(), "Service 'approach_shelf' not available. Retrying...");
+    }
+    RCLCPP_INFO(this->get_logger(), "Service 'approach_shelf' is now available.");
+
     RCLCPP_INFO(this->get_logger(), "Node initialized and ready.");
 }
 
@@ -62,7 +72,7 @@ void PreApproachNode::odometry_callback(const nav_msgs::msg::Odometry::SharedPtr
 
 void PreApproachNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
   if (state_ == State::MOVING_FORWARD) {
-    RCLCPP_INFO(this->get_logger(), "scan_callback, state::Moving_Forward");
+    // RCLCPP_INFO(this->get_logger(), "scan_callback, state::Moving_Forward");
     float min_distance = msg->ranges[540]; // Center laser scan value
     if (min_distance <= obstacle_distance_) {
       state_ = State::ROTATING;
@@ -82,14 +92,13 @@ void PreApproachNode::timer_callback() {
 
     switch (state_) {
         case State::MOVING_FORWARD:
+        // RCLCPP_INFO(this->get_logger(), "[MOVING_FORWARD] Entering MOVING_FORWARD state.");
         cmd_vel_msg.linear.x = 0.5; // Move forward
         cmd_vel_msg.angular.z = 0.0;
         break;
 
         case State::ROTATING:
-        RCLCPP_INFO(this->get_logger(),
-                    "rotation_degree : %d, rotation_radian : %f, yaw:%f",
-                    rotation_degrees_, rotation_radian, yaw_);
+        // RCLCPP_INFO(this->get_logger(),"rotation_degree : %d, rotation_radian : %f, yaw:%f",rotation_degrees_, rotation_radian, yaw_);
         cmd_vel_msg.angular.z = rotation_radian * 0.2; // Rotate
         if (std::fabs(rotation_radian - yaw_) <= 0.03) {
             state_ = final_approach_ ? State::APPROACH : State::STOPPED;
@@ -97,22 +106,46 @@ void PreApproachNode::timer_callback() {
         break;
 
         case State::APPROACH: {
+            RCLCPP_INFO(this->get_logger(), "[APPROACH] Entering APPROACH state.");
+
+            // Create the service request
             auto request = std::make_shared<attach_shelf::srv::GoToLoading::Request>();
             request->attach_to_shelf = final_approach_;
-            auto result = srv_client_->async_send_request(request);
-            final_client_state_ = result.get()->complete; // get_response
+            RCLCPP_INFO(this->get_logger(), "[APPROACH] Sending service request to 'approach_shelf' with attach_to_shelf=%s",
+                        final_approach_ ? "true" : "false");
+
+            // Call the service asynchronously
+            auto result_future = srv_client_->async_send_request(request);
+
+            // Wait for the service response
+            auto future_status = rclcpp::spin_until_future_complete(shared_from_this(), result_future);
+            if (future_status == rclcpp::FutureReturnCode::SUCCESS) {
+                auto response = result_future.get();
+                if (response->complete) {
+                    RCLCPP_INFO(this->get_logger(), "[APPROACH] Service call successful. Shelf attachment completed.");
+                } else {
+                    RCLCPP_WARN(this->get_logger(), "[APPROACH] Service call failed. Shelf attachment not completed.");
+                }
+            } else if (future_status == rclcpp::FutureReturnCode::INTERRUPTED) {
+                RCLCPP_ERROR(this->get_logger(), "[APPROACH] Service call interrupted.");
+            } else {
+                RCLCPP_ERROR(this->get_logger(), "[APPROACH] Failed to call the service 'approach_shelf'.");
+            }
+
+            // Transition to STOPPED state
+            RCLCPP_INFO(this->get_logger(), "[APPROACH] Transitioning to STOPPED state.");
             state_ = State::STOPPED;
             break;
         }
-
         case State::STOPPED:
             RCLCPP_INFO(this->get_logger(), "STOPPING");
             cmd_vel_msg.angular.z = 0.0;
             cmd_vel_msg.linear.x = 0.0;
 
             // Graceful shutdown
-            rclcpp::shutdown();
-            return;
+            // rclcpp::shutdown();
+            // return;
+            break;
     }
 
     cmd_vel_pub_->publish(cmd_vel_msg);
