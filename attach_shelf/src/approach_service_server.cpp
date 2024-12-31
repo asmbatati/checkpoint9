@@ -124,7 +124,6 @@ bool ApproachServiceServer::finding_shelf_legs() {
     return true;
 }
 
-
 void ApproachServiceServer::finding_center_position() {
 
     double left_shelf_distance_from_robot = last_scan_->ranges[left_leg_index_];
@@ -181,12 +180,12 @@ void ApproachServiceServer::adding_fixed_cartframe() {
                 cart_x_, cart_y_, cart_yaw_);
 }
 
-
 void ApproachServiceServer::move_to_cart_center() {
 
     geometry_msgs::msg::Twist cmd_vel_msg;
     double distance_to_cart = sqrt(pow(cart_x_, 2) + pow(cart_y_, 2));
-    if (distance_to_cart > 0.4) {
+    
+    if (distance_to_cart > 0.2) {
         RCLCPP_INFO(this->get_logger(), "Moving to cart_frame");
         cmd_vel_msg.linear.x = 0.1;
         cmd_vel_msg.angular.z = 0.1;
@@ -244,7 +243,7 @@ void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::Sha
 
     finding_shelf_legs();
     adding_fixed_cartframe();
-    
+
     if (!start_service_) {
         RCLCPP_DEBUG(this->get_logger(), "No active service request. Skipping movement logic.");
         return;
@@ -296,48 +295,48 @@ void ApproachServiceServer::service_callback(
     }
 }
 
-void ApproachServiceServer::broadcast_timer_callback() {
-    if (!find_two_legs_) {
-        RCLCPP_WARN(this->get_logger(), "Cannot broadcast transform: Shelf legs not found.");
-        return;
-    }
+// void ApproachServiceServer::broadcast_timer_callback() {
+//     if (!find_two_legs_) {
+//         RCLCPP_WARN(this->get_logger(), "Cannot broadcast transform: Shelf legs not found.");
+//         return;
+//     }
 
-    if (left_leg_index_ >= static_cast<int>(last_scan_->ranges.size()) || 
-        right_leg_index_ >= static_cast<int>(last_scan_->ranges.size())) {
-        RCLCPP_ERROR(this->get_logger(), "Leg indices are out of bounds.");
-        return;
-    }
+//     if (left_leg_index_ >= static_cast<int>(last_scan_->ranges.size()) || 
+//         right_leg_index_ >= static_cast<int>(last_scan_->ranges.size())) {
+//         RCLCPP_ERROR(this->get_logger(), "Leg indices are out of bounds.");
+//         return;
+//     }
 
-    double left_distance = last_scan_->ranges[left_leg_index_];
-    double right_distance = last_scan_->ranges[right_leg_index_];
+//     double left_distance = last_scan_->ranges[left_leg_index_];
+//     double right_distance = last_scan_->ranges[right_leg_index_];
 
-    double center_distance = (left_distance + right_distance) / 2.0;
-    double left_angle = last_scan_->angle_min + left_leg_index_ * last_scan_->angle_increment;
-    double right_angle = last_scan_->angle_min + right_leg_index_ * last_scan_->angle_increment;
-    double center_angle = (left_angle + right_angle) / 2.0;
+//     double center_distance = (left_distance + right_distance) / 2.0;
+//     double left_angle = last_scan_->angle_min + left_leg_index_ * last_scan_->angle_increment;
+//     double right_angle = last_scan_->angle_min + right_leg_index_ * last_scan_->angle_increment;
+//     double center_angle = (left_angle + right_angle) / 2.0;
 
-    double center_x = center_distance * cos(center_angle);
-    double center_y = center_distance * sin(center_angle);
+//     double center_x = center_distance * cos(center_angle);
+//     double center_y = center_distance * sin(center_angle);
 
-    tf2::Quaternion shelf_quat;
-    shelf_quat.setRPY(0.0, 0.0, center_angle);
+//     tf2::Quaternion shelf_quat;
+//     shelf_quat.setRPY(0.0, 0.0, center_angle);
 
-    geometry_msgs::msg::TransformStamped transform_msg;
+//     geometry_msgs::msg::TransformStamped transform_msg;
 
-    transform_msg.header.stamp = this->get_clock()->now();
-    transform_msg.header.frame_id = odom_frame_;
-    transform_msg.child_frame_id = cart_frame_;
-    transform_msg.transform.translation.x = center_x;
-    transform_msg.transform.translation.y = center_y;
-    transform_msg.transform.rotation.x = shelf_quat.x();
-    transform_msg.transform.rotation.y = shelf_quat.y();
-    transform_msg.transform.rotation.z = shelf_quat.z();
-    transform_msg.transform.rotation.w = shelf_quat.w();
+//     transform_msg.header.stamp = this->get_clock()->now();
+//     transform_msg.header.frame_id = odom_frame_;
+//     transform_msg.child_frame_id = cart_frame_;
+//     transform_msg.transform.translation.x = center_x;
+//     transform_msg.transform.translation.y = center_y;
+//     transform_msg.transform.rotation.x = shelf_quat.x();
+//     transform_msg.transform.rotation.y = shelf_quat.y();
+//     transform_msg.transform.rotation.z = shelf_quat.z();
+//     transform_msg.transform.rotation.w = shelf_quat.w();
 
-    tf_broadcaster_->sendTransform(transform_msg);
+//     tf_broadcaster_->sendTransform(transform_msg);
 
-    RCLCPP_INFO(this->get_logger(), "Broadcasted transform: x=%.2f, y=%.2f, yaw=%.2f",
-                center_x, center_y, center_angle);
-}
+//     RCLCPP_INFO(this->get_logger(), "Broadcasted transform: x=%.2f, y=%.2f, yaw=%.2f",
+//                 center_x, center_y, center_angle);
+// }
 
 

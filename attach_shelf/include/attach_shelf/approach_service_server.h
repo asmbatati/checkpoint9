@@ -40,7 +40,7 @@ private:
 
     // LaserScan callback
     void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-    void broadcast_timer_callback();
+    // void broadcast_timer_callback();
 
     // Helper methods for shelf handling
     bool finding_shelf_legs();
