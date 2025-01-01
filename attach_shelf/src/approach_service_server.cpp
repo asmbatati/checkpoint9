@@ -182,6 +182,35 @@ void ApproachServiceServer::adding_fixed_cartframe() {
         return;
     }
 
+    // Validate coordinates before broadcasting
+    if (std::isnan(cart_x_) || std::isnan(cart_y_) || std::isnan(cart_yaw_)) {
+        RCLCPP_ERROR(this->get_logger(), "Cart frame coordinates contain NaN values.");
+        return;
+    }
+
+    // Create a quaternion for the rotation and validate it
+    tf2::Quaternion shelf_quat;
+    shelf_quat.setRPY(0.0, 0.0, cart_yaw_);
+
+    if (std::isnan(shelf_quat.x()) || std::isnan(shelf_quat.y()) || 
+        std::isnan(shelf_quat.z()) || std::isnan(shelf_quat.w())) {
+        RCLCPP_ERROR(this->get_logger(), "Quaternion contains NaN values.");
+        return;
+    }
+
+    // Check for denormalized quaternion
+    double magnitude = std::sqrt(
+        std::pow(shelf_quat.x(), 2) +
+        std::pow(shelf_quat.y(), 2) +
+        std::pow(shelf_quat.z(), 2) +
+        std::pow(shelf_quat.w(), 2)
+    );
+
+    if (std::fabs(magnitude - 1.0) > 1e-6) {
+        RCLCPP_ERROR(this->get_logger(), "Quaternion is not normalized. Magnitude: %.6f", magnitude);
+        return;
+    }
+
     geometry_msgs::msg::TransformStamped cart_transform;
 
     cart_transform.header.stamp = this->get_clock()->now();
@@ -192,11 +221,12 @@ void ApproachServiceServer::adding_fixed_cartframe() {
     cart_transform.transform.translation.y = cart_y_;
     cart_transform.transform.translation.z = 0.0;
 
-    cart_transform.transform.rotation.x = cart_quat_.x();
-    cart_transform.transform.rotation.y = cart_quat_.y();
-    cart_transform.transform.rotation.z = cart_quat_.z();
-    cart_transform.transform.rotation.w = cart_quat_.w();
+    cart_transform.transform.rotation.x = shelf_quat.x();
+    cart_transform.transform.rotation.y = shelf_quat.y();
+    cart_transform.transform.rotation.z = shelf_quat.z();
+    cart_transform.transform.rotation.w = shelf_quat.w();
 
+    // Broadcast the transform
     tf_broadcaster_->sendTransform(cart_transform);
 
     RCLCPP_INFO(this->get_logger(), "Broadcasted cart frame at x=%.2f, y=%.2f, yaw=%.2f",
@@ -244,7 +274,7 @@ bool ApproachServiceServer::move_to_cart_center() {
         cmd_vel_msg.linear.x = 0.1 * std::min(distance_to_cart, 1.0);  // Scale speed based on distance
         cmd_vel_msg.angular.z = 0.3 * yaw_error;  // Proportional control for angular velocity
         cmd_vel_pub_->publish(cmd_vel_msg);
-        found_center_position_ = false;
+        // found_center_position_ = false;
     } else {
         // Stop movement when close enough
         RCLCPP_INFO(this->get_logger(), "Reached cart center. Stopping.");
@@ -340,7 +370,14 @@ void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::Sha
     last_scan_ = msg;
 
     finding_shelf_legs();
+    finding_center_position();
     adding_fixed_cartframe();
+
+    // if (find_two_legs_ and !found_center_position_){
+    //     finding_center_position();
+    //     adding_fixed_cartframe();
+    // }
+
 
     if (!start_service_) {
         RCLCPP_DEBUG(this->get_logger(), "No active service request. Skipping movement logic.");

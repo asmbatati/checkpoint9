@@ -143,9 +143,9 @@ void PreApproachNode::timer_callback() {
             cmd_vel_msg.linear.x = 0.0;
 
             // Graceful shutdown
-            // rclcpp::shutdown();
-            // return;
-            break;
+            rclcpp::shutdown();
+            return;
+            // break;
     }
 
     cmd_vel_pub_->publish(cmd_vel_msg);
