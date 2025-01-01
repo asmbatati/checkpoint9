@@ -1,65 +1,4 @@
-#include "geometry_msgs/msg/twist.hpp"
-#include "nav_msgs/msg/odometry.hpp"
-#include "rclcpp/logging.hpp"
-#include "rclcpp/node.hpp"
-#include "rclcpp/publisher.hpp"
-#include "rclcpp/rclcpp.hpp"
-#include "rclcpp/subscription.hpp"
-#include "rclcpp/timer.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
-#include <cmath>
-#include <iostream>
-#include <memory>
-#include <tf2/LinearMath/Matrix3x3.h>
-#include <tf2/LinearMath/Quaternion.h>
-
-using namespace std::chrono_literals;
-
-enum class MotionState { Premotion, MovingForward, Rotating, Finished };
-
-class PreApproach : public rclcpp::Node {
-public:
-  PreApproach();
-
-private:
-  static constexpr char kNodeName[]{"pre_approach"};
-  static constexpr char kScanTopicName[]{"/scan"};
-  static constexpr char kVelCmdTopicName[]{"/diffbot_base_controller/cmd_vel_unstamped"};
-  static constexpr char kOdomTopicName[]{"/odom"};
-
-  static constexpr char kObstacleParamName[]{"obstacle"};
-  static constexpr char kDegreesParamName[]{"degrees"};
-
-  static constexpr auto kTimerPeriod{100ms};
-
-  static constexpr double kForwardVel{0.2}; // [m/s]
-  static constexpr double kAngularVel{0.5}; // [rad/s]
-
-  static constexpr double kPi{3.1416};
-  static constexpr double kDegreesToRad{kPi / 180};
-
-  void scan_cb(const std::shared_ptr<const sensor_msgs::msg::LaserScan> msg);
-  void odom_cb(const std::shared_ptr<const nav_msgs::msg::Odometry> msg);
-  bool get_params();
-  void declare_params();
-  void timer_cb();
-
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr
-      scan_subscription_{};
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_{};
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_{};
-  rclcpp::TimerBase::SharedPtr timer_{};
-
-  double dist_to_obstacle_current_{}; // [m]
-  double dist_to_obstacle_final_{};   // [m]
-  double rotation_final_{};           // [rad]
-  double rotation_last_{};            // [rad]
-  double rotation_total_{};           // [rad]
-  double rotation_current_{0.0};      // [rad]
-  MotionState motion_state_{MotionState::Premotion};
-  bool received_odom_{false};
-  bool received_scan_{false};
-};
+#include "attach_shelf/pre_approach_v2.h"
 
 PreApproach::PreApproach()
     : Node{kNodeName},
@@ -75,6 +14,8 @@ PreApproach::PreApproach()
           })},
       twist_publisher_{this->create_publisher<geometry_msgs::msg::Twist>(
           kVelCmdTopicName, 1)},
+      client_{
+          this->create_client<attach_shelf::srv::GoToLoading>(kServiceName)},
       timer_{this->create_wall_timer(kTimerPeriod,
                                      [this]() { return timer_cb(); })} {
   declare_params();
@@ -115,8 +56,11 @@ void PreApproach::odom_cb(
 bool PreApproach::get_params() {
   double dist_to_obstacle_final{};
   int rotation_final_degrees{};
+  bool final_approach{};
+
   this->get_parameter(kObstacleParamName, dist_to_obstacle_final);
   this->get_parameter(kDegreesParamName, rotation_final_degrees);
+  this->get_parameter("final_approach", final_approach);
 
   if (dist_to_obstacle_final <= 0) {
     RCLCPP_WARN_ONCE(this->get_logger(),
@@ -127,6 +71,7 @@ bool PreApproach::get_params() {
 
   dist_to_obstacle_final_ = dist_to_obstacle_final;
   rotation_final_ = rotation_final_degrees * kDegreesToRad;
+  final_approach_ = final_approach;
   return true;
 }
 
@@ -142,6 +87,12 @@ void PreApproach::declare_params() {
       "Degrees to rotate the robot after stopping.";
   this->declare_parameter<int>(kDegreesParamName, 0.0,
                                degrees_param_description);
+
+  rcl_interfaces::msg::ParameterDescriptor final_approach_param_description{};
+  final_approach_param_description.description =
+      "Sets whether to perform the final approach.";
+  this->declare_parameter<bool>("final_approach", true,
+                                final_approach_param_description);
 }
 
 void PreApproach::timer_cb() {
@@ -185,23 +136,33 @@ void PreApproach::timer_cb() {
       rotation_last_ = rotation_current_;
       break;
     }
-    motion_state_ = MotionState::Finished;
+    motion_state_ = MotionState::FinalApproach;
     [[fallthrough]];
   }
+  case MotionState::FinalApproach: {
+    RCLCPP_INFO_ONCE(this->get_logger(), "Performing final approach.");
+    twist_publisher_->publish(geometry_msgs::msg::Twist{});
+    auto request{std::make_shared<attach_shelf::srv::GoToLoading::Request>()};
+    rclcpp::Client<attach_shelf::srv::GoToLoading>::SharedFuture
+        result_future{};
+    std::future_status status{};
+    request->attach_to_shelf = final_approach_;
+    result_future = client_->async_send_request(request).share();
+    status = result_future.wait_for(kFutureTimeout);
+    if (status != std::future_status::ready) {
+      RCLCPP_WARN(this->get_logger(), "%s service timed out.", kServiceName);
+    }
+    if (!result_future.get()->complete) {
+      RCLCPP_WARN(this->get_logger(), "%s service failed.", kServiceName);
+    }
+  }
+    motion_state_ = MotionState::Finished;
+    [[fallthrough]];
   case MotionState::Finished:
     RCLCPP_INFO_ONCE(this->get_logger(), "Motion finished.");
     timer_->cancel();
-    rclcpp::shutdown();
-    return;
   };
 
   twist_publisher_->publish(twist);
 }
 
-int main(int argc, char **argv) {
-  rclcpp::init(argc, argv);
-
-  rclcpp::spin(std::make_shared<PreApproach>());
-
-  rclcpp::shutdown();
-}

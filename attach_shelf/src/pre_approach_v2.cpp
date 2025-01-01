@@ -1,175 +1,254 @@
-#include "attach_shelf/pre_approach_v2.h"
+#include "attach_shelf/srv/go_to_loading.hpp"
+#include "geometry_msgs/msg/detail/twist__struct.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "rclcpp/logging.hpp"
+#include "rclcpp/node.hpp"
+#include "rclcpp/publisher.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp/subscription.hpp"
+#include "rclcpp/timer.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include <cmath>
+#include <iostream>
+#include <memory>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
 
-PreApproachNode::PreApproachNode() : Node("pre_approach_v2_node") {
+using namespace std::chrono_literals;
 
-    // Declare and get parameters
-    obstacle_distance_ = this->declare_parameter<float>("obstacle", 0.0);
-    rotation_degrees_ = this->declare_parameter<int>("degrees", 0);
-    final_approach_ = this->declare_parameter<bool>("final_approach", false);
+enum class MotionState {
+  Premotion,
+  MovingForward,
+  Rotating,
+  FinalApproach,
+  Finished
+};
 
-    navi_callback_group_ = this->create_callback_group(
-        rclcpp::CallbackGroupType::MutuallyExclusive);
-    timer_cb_group_ = navi_callback_group_;
-    sub_cb_group_ = timer_cb_group_;
-    navigation_options.callback_group = sub_cb_group_;
+class PreApproach : public rclcpp::Node {
+public:
+  PreApproach();
 
-    scan_options.callback_group = navi_callback_group_;
-    odom_options.callback_group = navi_callback_group_;
+private:
+  static constexpr char kNodeName[]{"pre_approach_v2"};
+  static constexpr char kScanTopicName[]{"/scan"};
+  static constexpr char kVelCmdTopicName[]{"/diffbot_base_controller/cmd_vel_unstamped"};
+  static constexpr char kOdomTopicName[]{"odom"};
 
-    // Create subscribers and publishers
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        "/scan", 10,
-        std::bind(&PreApproachNode::scan_callback, this, std::placeholders::_1),
-        scan_options);
+  static constexpr char kObstacleParamName[]{"obstacle"};
+  static constexpr char kDegreesParamName[]{"degrees"};
 
-    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/diffbot_base_controller/odom", 10,
-        std::bind(&PreApproachNode::odometry_callback, this,
-                    std::placeholders::_1),
-        odom_options);
+  static constexpr auto kTimerPeriod{100ms};
 
-    cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
-        "/diffbot_base_controller/cmd_vel_unstamped", 10);
+  static constexpr double kForwardVel{0.2}; // [m/s]
+  static constexpr double kAngularVel{0.5}; // [rad/s]
 
-    // Initialize state
-    state_ = State::MOVING_FORWARD;
-    yaw_ = 0.0;
-    rotation_degrees_ = 0;
-    obstacle_distance_ = 0.0;
-    final_client_state_ = false;
+  static constexpr double kPi{3.1416};
+  static constexpr double kDegreesToRad{kPi / 180};
 
-    // Create timer for publishing velocity commands
-    timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&PreApproachNode::timer_callback, this), timer_cb_group_);
+  constexpr static char kServiceName[]{"approach_shelf"};
+  static constexpr auto kServiceTimeout{1s};
+  static constexpr auto kFutureTimeout{30s};
 
-    srv_client_ = this->create_client<attach_shelf::srv::GoToLoading>("approach_shelf");
+  void scan_cb(const std::shared_ptr<const sensor_msgs::msg::LaserScan> msg);
+  void odom_cb(const std::shared_ptr<const nav_msgs::msg::Odometry> msg);
+  bool get_params();
+  void declare_params();
+  void timer_cb();
 
-    // Wait for the service to become available
-    while (!srv_client_->wait_for_service(std::chrono::seconds(1))) {
-        if (!rclcpp::ok()) {
-            RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the service. Exiting.");
-            return;  // Return instead of `return 0` since this is not `main`
-        }
-        RCLCPP_WARN(this->get_logger(), "Service 'approach_shelf' not available. Retrying...");
-    }
-    RCLCPP_INFO(this->get_logger(), "Service 'approach_shelf' is now available.");
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr
+      scan_subscription_{};
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_{};
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_{};
+  rclcpp::Client<attach_shelf::srv::GoToLoading>::SharedPtr client_;
+  rclcpp::TimerBase::SharedPtr timer_{};
 
-    RCLCPP_INFO(this->get_logger(), "Node initialized and ready.");
+  double dist_to_obstacle_current_{}; // [m]
+  double dist_to_obstacle_final_{};   // [m]
+  double rotation_final_{};           // [rad]
+  double rotation_last_{};            // [rad]
+  double rotation_total_{};           // [rad]
+  double rotation_current_{0.0};      // [rad]
+  MotionState motion_state_{MotionState::Premotion};
+  bool received_odom_{false};
+  bool received_scan_{false};
+  bool final_approach_{};
+};
+
+PreApproach::PreApproach()
+    : Node{kNodeName},
+      scan_subscription_{this->create_subscription<sensor_msgs::msg::LaserScan>(
+          kScanTopicName, 1,
+          [this](const std::shared_ptr<const sensor_msgs::msg::LaserScan> msg) {
+            return scan_cb(msg);
+          })},
+      odom_subscription_{this->create_subscription<nav_msgs::msg::Odometry>(
+          kOdomTopicName, 1,
+          [this](const std::shared_ptr<const nav_msgs::msg::Odometry> msg) {
+            return odom_cb(msg);
+          })},
+      twist_publisher_{this->create_publisher<geometry_msgs::msg::Twist>(
+          kVelCmdTopicName, 1)},
+      client_{
+          this->create_client<attach_shelf::srv::GoToLoading>(kServiceName)},
+      timer_{this->create_wall_timer(kTimerPeriod,
+                                     [this]() { return timer_cb(); })} {
+  declare_params();
 }
 
-double PreApproachNode::get_yaw_from_quaternion(double x, double y, double z, double w) {
-  double siny_cosp = 2 * (w * z + x * y);
-  double cosy_cosp = 1 - 2 * (y * y + z * z);
-  return std::atan2(siny_cosp, cosy_cosp);
+void PreApproach::scan_cb(
+    const std::shared_ptr<const sensor_msgs::msg::LaserScan> msg) {
+  const auto dist_front{msg->ranges[msg->ranges.size() / 2]};
+  const auto range_min{msg->range_min};
+  const auto range_max{msg->range_max};
+
+  if (dist_front < range_min || dist_front > range_max) {
+    RCLCPP_WARN(this->get_logger(),
+                "Ignoring out-of-range laser measurement: %f (range_min:%f, "
+                "range_max:%f)",
+                dist_front, range_min, range_max);
+  };
+
+  dist_to_obstacle_current_ = dist_front;
+  received_scan_ = true;
 }
 
-void PreApproachNode::odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-  yaw_ = get_yaw_from_quaternion(
-      msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
-      msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
+void PreApproach::odom_cb(
+    const std::shared_ptr<const nav_msgs::msg::Odometry> msg) {
+  tf2::Quaternion q{msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
+                    msg->pose.pose.orientation.z, msg->pose.pose.orientation.w};
+
+  double pitch{};
+  double roll{};
+  double yaw{};
+
+  tf2::Matrix3x3(q).getEulerYPR(yaw, pitch, roll);
+
+  received_odom_ = true;
+  rotation_current_ = yaw;
 }
 
-void PreApproachNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-  if (state_ == State::MOVING_FORWARD) {
-    // RCLCPP_INFO(this->get_logger(), "scan_callback, state::Moving_Forward");
-    float min_distance = msg->ranges[540]; // Center laser scan value
-    if (min_distance <= obstacle_distance_) {
-      state_ = State::ROTATING;
-    }
+bool PreApproach::get_params() {
+  double dist_to_obstacle_final{};
+  int rotation_final_degrees{};
+  bool final_approach{};
+
+  this->get_parameter(kObstacleParamName, dist_to_obstacle_final);
+  this->get_parameter(kDegreesParamName, rotation_final_degrees);
+  this->get_parameter("final_approach", final_approach);
+
+  if (dist_to_obstacle_final <= 0) {
+    RCLCPP_WARN_ONCE(this->get_logger(),
+                     "Parameter %s must be positive, got: %f",
+                     kObstacleParamName, dist_to_obstacle_final);
+    return false;
   }
+
+  dist_to_obstacle_final_ = dist_to_obstacle_final;
+  rotation_final_ = rotation_final_degrees * kDegreesToRad;
+  final_approach_ = final_approach;
+  return true;
 }
 
-void PreApproachNode::timer_callback() {
+void PreApproach::declare_params() {
+  rcl_interfaces::msg::ParameterDescriptor obstacle_param_description{};
+  obstacle_param_description.description =
+      "Distance from the obstacle (in m) to stop the robot.";
+  this->declare_parameter<std::double_t>(kObstacleParamName, 0.5,
+                                         obstacle_param_description);
 
-    geometry_msgs::msg::Twist cmd_vel_msg;
-    float rotation_radian = static_cast<float>(rotation_degrees_ * (M_PI / 180));
+  rcl_interfaces::msg::ParameterDescriptor degrees_param_description{};
+  degrees_param_description.description =
+      "Degrees to rotate the robot after stopping.";
+  this->declare_parameter<int>(kDegreesParamName, 0.0,
+                               degrees_param_description);
 
-    // Get parameter values
-    this->get_parameter("obstacle", obstacle_distance_);
-    this->get_parameter("degrees", rotation_degrees_);
-    this->get_parameter("final_approach", final_approach_);
-
-    switch (state_) {
-        case State::MOVING_FORWARD:
-        // RCLCPP_INFO(this->get_logger(), "[MOVING_FORWARD] Entering MOVING_FORWARD state.");
-        cmd_vel_msg.linear.x = 0.5; // Move forward
-        cmd_vel_msg.angular.z = 0.0;
-        break;
-
-        case State::ROTATING:
-        // RCLCPP_INFO(this->get_logger(),"rotation_degree : %d, rotation_radian : %f, yaw:%f",rotation_degrees_, rotation_radian, yaw_);
-        cmd_vel_msg.angular.z = rotation_radian * 0.2; // Rotate
-        if (std::fabs(rotation_radian - yaw_) <= 0.03) {
-            state_ = final_approach_ ? State::APPROACH : State::STOPPED;
-        }
-        break;
-
-        case State::APPROACH: {
-            RCLCPP_INFO(this->get_logger(), "[APPROACH] Entering APPROACH state.");
-
-            // Create the service request
-            auto request = std::make_shared<attach_shelf::srv::GoToLoading::Request>();
-            request->attach_to_shelf = final_approach_;
-            RCLCPP_INFO(this->get_logger(), "[APPROACH] Sending service request to 'approach_shelf' with attach_to_shelf=%s",
-                        final_approach_ ? "true" : "false");
-
-            // Call the service asynchronously
-            auto result_future = srv_client_->async_send_request(request);
-
-            // Wait for the service response
-            auto future_status = rclcpp::spin_until_future_complete(shared_from_this(), result_future);
-            if (future_status == rclcpp::FutureReturnCode::SUCCESS) {
-                auto response = result_future.get();
-                if (response->complete) {
-                    RCLCPP_INFO(this->get_logger(), "[APPROACH] Service call successful. Shelf attachment completed.");
-                } else {
-                    RCLCPP_WARN(this->get_logger(), "[APPROACH] Service call failed. Shelf attachment not completed.");
-                }
-            } else if (future_status == rclcpp::FutureReturnCode::INTERRUPTED) {
-                RCLCPP_ERROR(this->get_logger(), "[APPROACH] Service call interrupted.");
-            } else {
-                RCLCPP_ERROR(this->get_logger(), "[APPROACH] Failed to call the service 'approach_shelf'.");
-            }
-
-            // Transition to STOPPED state
-            RCLCPP_INFO(this->get_logger(), "[APPROACH] Transitioning to STOPPED state.");
-            state_ = State::STOPPED;
-            break;
-        }
-        case State::STOPPED:
-            RCLCPP_INFO(this->get_logger(), "STOPPING");
-            cmd_vel_msg.angular.z = 0.0;
-            cmd_vel_msg.linear.x = 0.0;
-
-            // Graceful shutdown
-            rclcpp::shutdown();
-            return;
-            // break;
-    }
-
-    cmd_vel_pub_->publish(cmd_vel_msg);
+  rcl_interfaces::msg::ParameterDescriptor final_approach_param_description{};
+  final_approach_param_description.description =
+      "Sets whether to perform the final approach.";
+  this->declare_parameter<bool>("final_approach", true,
+                                final_approach_param_description);
 }
 
-void PreApproachNode::call_approach_service() {
-    auto client = this->create_client<attach_shelf::srv::GoToLoading>("/approach_shelf");
-    auto request = std::make_shared<attach_shelf::srv::GoToLoading::Request>();
-    request->attach_to_shelf = this->get_parameter("final_approach").as_bool();
+void PreApproach::timer_cb() {
+  geometry_msgs::msg::Twist twist{};
 
-    if (!client->wait_for_service(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(this->get_logger(), "Service /approach_shelf unavailable!");
-        return;
+  switch (motion_state_) {
+  case MotionState::Premotion:
+    RCLCPP_INFO_ONCE(this->get_logger(), "Preparing for motion.");
+    if (!received_odom_) {
+      RCLCPP_WARN_ONCE(this->get_logger(), "Odometry not available.");
+      break;
     }
+    if (!received_scan_) {
+      RCLCPP_WARN(this->get_logger(), "Laser scan info not available.");
+      break;
+    }
+    if (!get_params()) {
+      RCLCPP_ERROR(this->get_logger(), "Received invalid parameter values.");
+      break;
+    }
+    motion_state_ = MotionState::MovingForward;
+    [[fallthrough]];
+  case MotionState::MovingForward:
+    RCLCPP_INFO_ONCE(this->get_logger(), "Heading towards wall...");
+    if (dist_to_obstacle_current_ > dist_to_obstacle_final_) {
+      twist.linear.x = kForwardVel;
+      break;
+    }
+    rotation_total_ = 0.0;
+    rotation_last_ = rotation_current_;
+    motion_state_ = MotionState::Rotating;
+    [[fallthrough]];
+  case MotionState::Rotating: {
+    RCLCPP_INFO_ONCE(this->get_logger(), "Initiating %f degrees rotation.",
+                     rotation_final_ / kDegreesToRad);
+    const int sign{rotation_final_ >= 0 ? 1 : -1};
+    rotation_total_ += std::atan2(std::sin(rotation_current_ - rotation_last_),
+                                  std::cos(rotation_current_ - rotation_last_));
+    if (sign * (rotation_total_ - rotation_final_) < 0) {
+      twist.angular.z = sign * kAngularVel;
+      rotation_last_ = rotation_current_;
+      break;
+    }
+    motion_state_ = MotionState::FinalApproach;
+    [[fallthrough]];
+  }
+  case MotionState::FinalApproach: {
+    twist_publisher_->publish(geometry_msgs::msg::Twist{});
+    auto request{std::make_shared<attach_shelf::srv::GoToLoading::Request>()};
+    rclcpp::Client<attach_shelf::srv::GoToLoading>::SharedFuture
+        result_future{};
+    std::future_status status{};
+    request->attach_to_shelf = final_approach_;
+    result_future = client_->async_send_request(request).share();
+    status = result_future.wait_for(kFutureTimeout);
+    if (status != std::future_status::ready) {
+      RCLCPP_WARN(this->get_logger(), "%s service timed out.", kServiceName);
+    }
+    if (!result_future.get()->complete) {
+      RCLCPP_WARN(this->get_logger(), "%s service failed.", kServiceName);
+    }
+    motion_state_ = MotionState::Finished;
+    [[fallthrough]];
+  }
+    motion_state_ = MotionState::Finished;
+    [[fallthrough]];
+    
+  case MotionState::Finished:
+    RCLCPP_INFO_ONCE(this->get_logger(), "Motion finished.");
+    timer_->cancel();
+    rclcpp::shutdown();
+    return;
+  };
 
-    auto result = client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result) ==
-        rclcpp::FutureReturnCode::SUCCESS) {
-        if (result.get()->complete) {
-        RCLCPP_INFO(this->get_logger(), "Final approach successful!");
-        } else {
-        RCLCPP_WARN(this->get_logger(), "Final approach failed!");
-        }
-    } else {
-        RCLCPP_ERROR(this->get_logger(), "Service call failed!");
-    }
+  twist_publisher_->publish(twist);
+}
+
+int main(int argc, char **argv) {
+  rclcpp::init(argc, argv);
+
+  rclcpp::spin(std::make_shared<PreApproach>());
+
+  rclcpp::shutdown();
 }

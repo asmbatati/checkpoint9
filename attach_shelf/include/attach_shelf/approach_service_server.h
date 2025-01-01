@@ -9,6 +9,7 @@
 #include <memory>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include "rclcpp/logging.hpp"
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -80,7 +81,7 @@ private:
     // State variables
     bool start_service_;
     bool move_extra_distance_;
-    bool found_center_position_;
+    bool reached_center_position_;
     bool robot_rotating_done_;
     bool find_two_legs_;
 
@@ -89,5 +90,6 @@ private:
     nav_msgs::msg::Odometry::SharedPtr last_odom_;
     double yaw_;
 };
+
 
 #endif // APPROACH_SERVICE_SERVER_H

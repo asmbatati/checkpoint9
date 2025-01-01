@@ -3,57 +3,55 @@ import launch
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
-    
     #files
     description_package_name = "attach_shelf"
     rviz_file = 'attach_shelf.rviz'
 
-    obstacle = LaunchConfiguration("obstacle")
+    # Declare launch arguments
     obstacle_arg = DeclareLaunchArgument(
-        "obstacle",
-        default_value="0.5"
+        'obstacle', default_value='0.0', description='Distance to obstacle'
     )
-
-    degrees = LaunchConfiguration("degrees")
     degrees_arg = DeclareLaunchArgument(
-        "degrees",
-        default_value="0.0"
+        'degrees', default_value='-90', description='Rotation degrees'
     )
-
-    final_approach = LaunchConfiguration("final_approach")
     final_approach_arg = DeclareLaunchArgument(
-      "final_approach",
-      default_value="False")
-
-    use_sim_time = LaunchConfiguration('use_sim_time')
-    use_sim_time_arg = DeclareLaunchArgument(
-      "use_sim_time",
-      default_value="True"
-    )      
-    
-    attach_shelf_node = Node(
-        package="attach_shelf",
-        executable="pre_approach_v2",
-        output="screen",
-        parameters = [{
-            "obstacle" : obstacle, 
-            "degrees" : degrees, 
-            "final_approach" : final_approach, 
-            "use_sim_time" : use_sim_time
-        }],
-        emulate_tty=True
+        'final_approach', default_value='false', description='Final approach flag'
     )
-    
+
+    # Arguments: All the arguments have to be strings. Floats will give an error of NonItreable.
+    launch.actions.DeclareLaunchArgument('obstacle', default_value='0.0'),
+    launch.actions.DeclareLaunchArgument('degrees', default_value='-90.0'),
+    launch.actions.DeclareLaunchArgument('final_approach', default_value='true'),
+    launch.actions.LogInfo(
+        msg=launch.substitutions.LaunchConfiguration('obstacle')),
+    launch.actions.LogInfo(
+        msg=launch.substitutions.LaunchConfiguration('degrees')),
+    launch.actions.LogInfo(
+        msg=launch.substitutions.LaunchConfiguration('final_approach')),
+
+    pre_approach_v2_node = Node(
+        package=description_package_name,
+        executable='pre_approach_v2_node',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'obstacle': launch.substitutions.LaunchConfiguration('obstacle'),
+            'degrees': launch.substitutions.LaunchConfiguration('degrees'),
+            'final_approach': launch.substitutions.LaunchConfiguration('final_approach'),
+        }]
+    )
+
     approach_service_server_node = Node(
-        package="attach_shelf",
-        executable="approach_service_server",
-        output="screen",
-                parameters = [{"use_sim_time" : use_sim_time}],
-                emulate_tty=True
+        package=description_package_name,
+        executable='approach_service_server_node',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'obstacle': launch.substitutions.LaunchConfiguration('obstacle')
+        }]
     )
 
     # Static transforms for missing frames
@@ -102,9 +100,8 @@ def generate_launch_description():
         obstacle_arg,
         degrees_arg,
         final_approach_arg,
-        use_sim_time_arg,
-        attach_shelf_node,
-        approach_service_server_node,    
+        pre_approach_v2_node,
+        approach_service_server_node,
         static_transform_elevator,
         static_transform_left_wheel,
         static_transform_right_wheel,
