@@ -38,17 +38,20 @@ private:
         const std::shared_ptr<attach_shelf::srv::GoToLoading::Request> request,
         const std::shared_ptr<attach_shelf::srv::GoToLoading::Response> response);
 
-    // LaserScan callback
+    // Callbacks
     void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+    void odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
     // void broadcast_timer_callback();
 
     // Helper methods for shelf handling
+    double get_yaw_from_quaternion(double x, double y, double z, double w);
     bool finding_shelf_legs();
     void finding_center_position();
     void adding_fixed_cartframe();
-    void move_to_cart_center();
+    bool move_to_cart_center();
     void rotating_center_cart();
-    void moving_under_cart();
+    bool moving_under_cart();
+    void lift_shelf();
 
 
     // ROS2 Members
@@ -83,7 +86,8 @@ private:
 
     // Robot and cart poses
     geometry_msgs::msg::Pose cart_pose_, robot_pose_;
-
+    nav_msgs::msg::Odometry::SharedPtr last_odom_;
+    double yaw_;
 };
 
 #endif // APPROACH_SERVICE_SERVER_H

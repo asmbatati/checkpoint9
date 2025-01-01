@@ -14,8 +14,16 @@ ApproachServiceServer::ApproachServiceServer() : Node("approach_service_server_n
                   std::placeholders::_1),
         navigation_options);
 
+    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+        "/diffbot_base_controller/odom", 10,
+        std::bind(&ApproachServiceServer::odometry_callback, this,
+                    std::placeholders::_1),
+        navigation_options);
+
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(
         "/diffbot_base_controller/cmd_vel_unstamped", 10);
+    
+    elevator_up_pub_ = this->create_publisher<std_msgs::msg::String>("/elevator_up", 10);
 
     // Create service
     // server_ = this->create_service<attach_shelf::srv::GoToLoading>(
@@ -49,11 +57,26 @@ ApproachServiceServer::ApproachServiceServer() : Node("approach_service_server_n
     cart_y_ = 0.0;
     cart_yaw_ = 0.0;
 
+    yaw_ = 0.0;
+
     move_extra_distance_ = false;
     found_center_position_ = false;
     robot_rotating_done_ = false;
     find_two_legs_ = false;
     start_service_ = false;
+}
+
+double ApproachServiceServer::get_yaw_from_quaternion(double x, double y, double z, double w) {
+    double siny_cosp = 2 * (w * z + x * y);
+    double cosy_cosp = 1 - 2 * (y * y + z * z);
+    return std::atan2(siny_cosp, cosy_cosp);
+}
+
+void ApproachServiceServer::odometry_callback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    last_odom_ = msg;
+    yaw_ = get_yaw_from_quaternion(
+        msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
 }
 
 bool ApproachServiceServer::finding_shelf_legs() {
@@ -180,62 +203,137 @@ void ApproachServiceServer::adding_fixed_cartframe() {
                 cart_x_, cart_y_, cart_yaw_);
 }
 
-void ApproachServiceServer::move_to_cart_center() {
+bool ApproachServiceServer::move_to_cart_center() {
+    // Ensure odometry data is available
+    if (!last_odom_) {
+        RCLCPP_WARN(this->get_logger(), "Odometry data not available. Cannot move to cart center.");
+        return false;
+    }
 
     geometry_msgs::msg::Twist cmd_vel_msg;
-    double distance_to_cart = sqrt(pow(cart_x_, 2) + pow(cart_y_, 2));
-    
+
+    // Get robot's current position from odometry
+    double robot_x = last_odom_->pose.pose.position.x;
+    double robot_y = last_odom_->pose.pose.position.y;
+
+    // Calculate distance and angle to the cart center
+    double dx = cart_x_ - robot_x;
+    double dy = cart_y_ - robot_y;
+    double distance_to_cart = sqrt(pow(dx, 2) + pow(dy, 2));
+
+    // Calculate the angle to the cart center
+    double target_yaw = atan2(dy, dx);
+
+    // Get the robot's current yaw from odometry
+    double robot_yaw = get_yaw_from_quaternion(
+        last_odom_->pose.pose.orientation.x,
+        last_odom_->pose.pose.orientation.y,
+        last_odom_->pose.pose.orientation.z,
+        last_odom_->pose.pose.orientation.w);
+
+    // Calculate yaw error
+    double yaw_error = target_yaw - robot_yaw;
+
+    // Normalize yaw error to [-PI, PI]
+    while (yaw_error > M_PI) yaw_error -= 2 * M_PI;
+    while (yaw_error < -M_PI) yaw_error += 2 * M_PI;
+
     if (distance_to_cart > 0.2) {
-        RCLCPP_INFO(this->get_logger(), "Moving to cart_frame");
-        cmd_vel_msg.linear.x = 0.1;
-        cmd_vel_msg.angular.z = 0.1;
+        // Move toward the cart center
+        RCLCPP_INFO(this->get_logger(), "Moving to cart center: Distance=%.2f, Yaw Error=%.2f", distance_to_cart, yaw_error);
+        cmd_vel_msg.linear.x = 0.1 * std::min(distance_to_cart, 1.0);  // Scale speed based on distance
+        cmd_vel_msg.angular.z = 0.3 * yaw_error;  // Proportional control for angular velocity
         cmd_vel_pub_->publish(cmd_vel_msg);
         found_center_position_ = false;
     } else {
-        RCLCPP_INFO(this->get_logger(), "Stop to moving cart");
+        // Stop movement when close enough
+        RCLCPP_INFO(this->get_logger(), "Reached cart center. Stopping.");
         cmd_vel_msg.linear.x = 0.0;
         cmd_vel_msg.angular.z = 0.0;
         cmd_vel_pub_->publish(cmd_vel_msg);
         move_extra_distance_ = true;
     }
+
+    return true;
 }
 
-void ApproachServiceServer::rotating_center_cart() {
+// void ApproachServiceServer::rotating_center_cart() {
 
-    geometry_msgs::msg::Twist cmd_vel_msg;
-    if (robot_pose_.orientation.z >= 0.05) {
-        RCLCPP_INFO(this->get_logger(), "Rotating left to cart_frame");
-        cmd_vel_msg.linear.x = 0.0;
-        cmd_vel_msg.angular.z = -0.1;
-        cmd_vel_pub_->publish(cmd_vel_msg);
-    } else if (robot_pose_.orientation.z <= -0.05) {
-        RCLCPP_INFO(this->get_logger(), "Rotating right to moving cart");
-        cmd_vel_msg.linear.x = 0.0;
-        cmd_vel_msg.angular.z = 0.1;
-        cmd_vel_pub_->publish(cmd_vel_msg);
-    } else if (((robot_pose_.orientation.z > 0.0) &&
-                (robot_pose_.orientation.z <= 0.05)) ||
-                ((robot_pose_.orientation.z >= -0.05) &&
-                (robot_pose_.orientation.z <= 0.0))) {
-        RCLCPP_INFO(this->get_logger(), "Stoping to moving cart");
-        cmd_vel_msg.linear.x = 0.0;
-        cmd_vel_msg.angular.z = 0.0;
-        cmd_vel_pub_->publish(cmd_vel_msg);
-        robot_rotating_done_ = true;
+//     geometry_msgs::msg::Twist cmd_vel_msg;
+//     if (robot_pose_.orientation.z >= 0.05) {
+//         RCLCPP_INFO(this->get_logger(), "Rotating left to cart_frame");
+//         cmd_vel_msg.linear.x = 0.0;
+//         cmd_vel_msg.angular.z = -0.1;
+//         cmd_vel_pub_->publish(cmd_vel_msg);
+//     } else if (robot_pose_.orientation.z <= -0.05) {
+//         RCLCPP_INFO(this->get_logger(), "Rotating right to moving cart");
+//         cmd_vel_msg.linear.x = 0.0;
+//         cmd_vel_msg.angular.z = 0.1;
+//         cmd_vel_pub_->publish(cmd_vel_msg);
+//     } else if (((robot_pose_.orientation.z > 0.0) &&
+//                 (robot_pose_.orientation.z <= 0.05)) ||
+//                 ((robot_pose_.orientation.z >= -0.05) &&
+//                 (robot_pose_.orientation.z <= 0.0))) {
+//         RCLCPP_INFO(this->get_logger(), "Stoping to moving cart");
+//         cmd_vel_msg.linear.x = 0.0;
+//         cmd_vel_msg.angular.z = 0.0;
+//         cmd_vel_pub_->publish(cmd_vel_msg);
+//         robot_rotating_done_ = true;
+//     }
+// }
+
+bool ApproachServiceServer::moving_under_cart() {
+    if (!last_odom_) {
+        RCLCPP_WARN(this->get_logger(), "No odometry data available. Cannot move under cart.");
+        return false;
     }
+
+    // Record the starting position
+    double start_x = last_odom_->pose.pose.position.x;
+    double start_y = last_odom_->pose.pose.position.y;
+
+    // Calculate the distance to move forward
+    double distance_to_move = 0.3;  // 30 cm
+    geometry_msgs::msg::Twist cmd_vel_msg;
+
+    while (rclcpp::ok()) {
+        // Calculate the current distance traveled
+        double current_x = last_odom_->pose.pose.position.x;
+        double current_y = last_odom_->pose.pose.position.y;
+        double distance_traveled = sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
+
+        if (distance_traveled >= distance_to_move) {
+            // Stop the robot when it has moved 30 cm
+            RCLCPP_INFO(this->get_logger(), "Robot has moved 30 cm under the cart. Stopping.");
+            cmd_vel_msg.linear.x = 0.0;
+            cmd_vel_msg.angular.z = 0.0;
+            cmd_vel_pub_->publish(cmd_vel_msg);
+            break;
+        }
+
+        // Keep moving forward
+        cmd_vel_msg.linear.x = 0.1;  // Move forward
+        cmd_vel_msg.angular.z = 0.0;  // No rotation
+        cmd_vel_pub_->publish(cmd_vel_msg);
+
+        // Give the system some time to process
+        rclcpp::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    return true;
 }
 
-void ApproachServiceServer::moving_under_cart() {
-
-    geometry_msgs::msg::Twist cmd_vel_msg;
-    int count = 3;
-
-    while (count != 0) {
-        cmd_vel_msg.linear.x = 0.1;
-        cmd_vel_msg.angular.z = 0.0;
-        cmd_vel_pub_->publish(cmd_vel_msg);
-        count--;
+void ApproachServiceServer::lift_shelf() {
+    if (!elevator_up_pub_) {
+        RCLCPP_ERROR(this->get_logger(), "Elevator publisher not initialized. Cannot lift the shelf.");
+        return;
     }
+
+    auto msg = std::make_shared<std_msgs::msg::String>();
+    msg->data = "LIFT";
+
+    RCLCPP_INFO(this->get_logger(), "Publishing 'LIFT' command to lift the shelf.");
+    elevator_up_pub_->publish(*msg);
 }
 
 void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
@@ -250,26 +348,38 @@ void ApproachServiceServer::scan_callback(const sensor_msgs::msg::LaserScan::Sha
     }
 
     // Log first few ranges and intensities for debugging
-    for (size_t i = 0; i < std::min<size_t>(last_scan_->ranges.size(), 10); ++i) {
-        RCLCPP_INFO(this->get_logger(), "Range[%zu]: %f Intensity: %f",
-                    i, last_scan_->ranges[i], last_scan_->intensities[i]);
-    }
+    // for (size_t i = 0; i < std::min<size_t>(last_scan_->ranges.size(), 10); ++i) {
+    //     RCLCPP_INFO(this->get_logger(), "Range[%zu]: %f Intensity: %f",
+    //                 i, last_scan_->ranges[i], last_scan_->intensities[i]);
+    // }
 
-    // Check if we can find shelf legs
     if (finding_shelf_legs()) {
-        if (!found_center_position_) {
-            finding_center_position();
-        }
-        if (found_center_position_ && !move_extra_distance_) {
-            move_to_cart_center();
-        }
-        if (move_extra_distance_ && !robot_rotating_done_) {
-            rotating_center_cart();
-        }
-        if (robot_rotating_done_) {
+        RCLCPP_INFO(this->get_logger(), "Moving to the center");
+        move_to_cart_center();
+        if(move_to_cart_center()){
+            RCLCPP_INFO(this->get_logger(), "Moving under the cart");
             moving_under_cart();
+            if(moving_under_cart()){
+                RCLCPP_INFO(this->get_logger(), "Lifting the cart");
+                lift_shelf();
+            }
         }
     }
+    // // Check if we can find shelf legs
+    // if (finding_shelf_legs()) {
+    //     if (!found_center_position_) {
+    //         finding_center_position();
+    //     }
+    //     if (found_center_position_ && !move_extra_distance_) {
+    //         move_to_cart_center();
+    //     }
+    //     if (move_extra_distance_ && !robot_rotating_done_) {
+    //         rotating_center_cart();
+    //     }
+    //     if (robot_rotating_done_) {
+    //         moving_under_cart();
+    //     }
+    // }
 }
 
 void ApproachServiceServer::service_callback(
