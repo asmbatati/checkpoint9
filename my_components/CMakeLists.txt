@@ -30,6 +30,11 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/GoToLoading.srv"
+  DEPENDENCIES std_msgs
+)
+
 include_directories(include)
 
 add_library(pre_approach SHARED src/pre_approach.cpp)
@@ -44,11 +49,62 @@ ament_target_dependencies(pre_approach
 rclcpp_components_register_nodes(pre_approach "my_components::PreApproach")
 set(node_plugins "${node_plugins}my_components::PreApproach;$<TARGET_FILE:pre_approach>\n")
 
+add_library(attach_server SHARED src/attach_server.cpp)
+target_compile_definitions(attach_server PRIVATE "COMPOSITION_BUILDING_DLL")
+ament_target_dependencies(attach_server
+  rclcpp
+  rclcpp_components
+  sensor_msgs
+  geometry_msgs
+  std_msgs
+  tf2
+  tf2_ros
+  tf2_eigen
+)
+rosidl_target_interfaces(attach_server
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rclcpp_components_register_nodes(attach_server "my_components::AttachServer")
+set(node_plugins "${node_plugins}my_components::AttachServer;$<TARGET_FILE:attach_server>\n")
+
+add_library(attach_client SHARED src/attach_client.cpp)
+target_compile_definitions(attach_client PRIVATE "COMPOSITION_BUILDING_DLL")
+ament_target_dependencies(attach_client
+  rclcpp
+  rclcpp_components
+)
+rosidl_target_interfaces(attach_client
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+rclcpp_components_register_nodes(attach_client "my_components::AttachClient")
+set(node_plugins "${node_plugins}my_components::AttachClient;$<TARGET_FILE:attach_client>\n")
+
+add_executable(manual_composition
+  src/manual_composition.cpp)
+target_link_libraries(manual_composition
+  attach_server)
+# ament_target_dependencies(manual_composition
+#   rclcpp   
+#   sensor_msgs
+#   geometry_msgs
+#   std_msgs
+#   tf2
+#   tf2_ros
+#   tf2_eigen)
+
+# # Generate interfaces for the .srv file
+# rosidl_generate_interfaces(${PROJECT_NAME} "srv/GoToLoading.srv" "action/GoToPose.action" DEPENDENCIES std_msgs)
+# rosidl_get_typesupport_target(typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 install(TARGETS
   pre_approach
+  attach_server
+  attach_client
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
+
+install(TARGETS manual_composition
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 install(
   DIRECTORY launch rviz

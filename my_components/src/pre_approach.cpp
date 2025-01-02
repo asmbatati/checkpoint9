@@ -104,8 +104,8 @@ void PreApproach::timer_cb() {
   case MotionState::Finished:
     RCLCPP_INFO_ONCE(this->get_logger(), "Motion finished.");
     timer_->cancel();
-    rclcpp::shutdown();
-    return;
+    // rclcpp::shutdown();
+    // return;
   };
 
   twist_publisher_->publish(twist);
