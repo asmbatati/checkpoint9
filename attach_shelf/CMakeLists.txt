@@ -43,20 +43,21 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   DEPENDENCIES std_msgs
 )
 
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 add_executable(pre_approach src/pre_approach.cpp)
 ament_target_dependencies(pre_approach rclcpp sensor_msgs geometry_msgs nav_msgs tf2)
 
 add_executable(approach_service_server src/approach_service_server.cpp)
 ament_target_dependencies(approach_service_server
   rclcpp sensor_msgs geometry_msgs std_msgs tf2 tf2_ros tf2_eigen)
-rosidl_target_interfaces(approach_service_server
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(approach_service_server ${cpp_typesupport_target})
+
 
 add_executable(pre_approach_v2 src/pre_approach_v2.cpp)
 ament_target_dependencies(pre_approach_v2
   rclcpp sensor_msgs geometry_msgs nav_msgs tf2)
-rosidl_target_interfaces(pre_approach_v2
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(pre_approach_v2 ${cpp_typesupport_target})
 
 install(
   TARGETS pre_approach approach_service_server pre_approach_v2
