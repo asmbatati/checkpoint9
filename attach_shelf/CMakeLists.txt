@@ -25,6 +25,7 @@ find_package(std_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 
 if(BUILD_TESTING)
@@ -44,6 +45,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+ament_export_dependencies(rosidl_default_runtime)
 
 add_executable(pre_approach src/pre_approach.cpp)
 ament_target_dependencies(pre_approach rclcpp sensor_msgs geometry_msgs nav_msgs tf2)
